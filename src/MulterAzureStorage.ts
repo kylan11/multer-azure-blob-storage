@@ -11,7 +11,7 @@ import { extname } from "path";
 import { Request } from "express";
 import { StorageEngine } from "multer";
 import { Writable } from "stream";
-import { BlobService, date, BlobUtilities } from "azure-storage";
+import { BlobService, date, BlobUtilities, createBlobServiceWithTokenCredential, TokenCredential } from "azure-storage";
 
 // Custom types
 export type MetadataObj = { [k: string]: string };
@@ -23,6 +23,7 @@ export interface IMASOptions {
     accessKey?: string;
     accountName?: string;
     connectionString?: string;
+    managedIdentityToken?: string;
     urlExpirationTime?: number;
     blobName?: MASNameResolver;
     containerName: MASNameResolver | string;
@@ -77,8 +78,8 @@ export class MulterAzureStorage implements StorageEngine {
         if (!options.connectionString) {
             options.accessKey = (options.accessKey || process.env.AZURE_STORAGE_ACCESS_KEY || null);
             options.accountName = (options.accountName || process.env.AZURE_STORAGE_ACCOUNT || null);
-            // Access key is required if no connection string is provided
-            if (!options.accessKey) {
+            // Access key is required if no connection string is provided and managed identity mode is false
+            if (!options.managedIdentityToken && !options.accessKey) {
                 errorLength++;
                 this._error.errorList.push(new Error("Missing required parameter: Azure blob storage access key."));
             }
@@ -184,9 +185,14 @@ export class MulterAzureStorage implements StorageEngine {
                 ? +options.urlExpirationTime
                 : this.DEFAULT_URL_EXPIRATION_TIME;
         // Init blob service
-        this._blobService = options.connectionString ?
-            new BlobService(options.connectionString) :
-            new BlobService(options.accountName, options.accessKey);
+        this._blobService = options.managedIdentityToken
+        ? createBlobServiceWithTokenCredential(
+            `https://${options.accountName}.blob.core.windows.net`,
+            new TokenCredential(options.managedIdentityToken),
+        )
+        : options.connectionString
+        ? new BlobService(options.connectionString)
+        : new BlobService(options.accountName, options.accessKey);
     }
 
     async _handleFile(req: Request, file: Express.Multer.File, cb: (error?: any, info?: Partial<MulterOutFile>) => void) {
